@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <title>即時監視器影像串流</title>
+    <style>
+        body {
+            background: #222;
+            color: #fff;
+            text-align: center;
+        }
+
+        .camera-block {
+            margin: 2em auto;
+            padding: 1em;
+            background: #333;
+            border-radius: 8px;
+            width: 95vw;
+            max-width: 800px;
+            position: relative;
+        }
+
+        img {
+            border: 2px solid #fff;
+            border-radius: 4px;
+            max-width: 90vw;
+            max-height: 60vh;
+            width: 100%;
+            display: block;
+            background: #000;
+        }
+
+        .camera-status {
+            font-size: 14px;
+            margin-bottom: 10px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.5);
+        }
+
+        h2 {
+            margin-bottom: 0.5em;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>即時監視器影像串流</h1>
+    <div id="cameras"></div>
+    <p>如遇斷線，系統會自動重試連線。</p>
+    <script>
+        const cameraList = [
+            { name: "大里橋", url: "https://cctv-ss03.thb.gov.tw/T3-189K+850" },
+            { name: "立新橋", url: "https://cctv-ss07.thb.gov.tw/T74-30K+132" },
+            { name: "太平路橋", url: "https://tcnvr4.taichung.gov.tw/063ae05e" },
+            { name: "台中復興路口", url: "https://tcnvr6.taichung.gov.tw/9ddb741d" },
+            { name: "台中醫院", url: "https://tcnvr6.taichung.gov.tw/2918be43" },
+            { name: "市政河南路", url: "https://tcnvr8.taichung.gov.tw/68e1a5a7" },
+        ];
+
+        const container = document.getElementById('cameras');
+        let cameraRefreshIntervals = [];
+
+        // 頁面可見性檢測
+        let isPageVisible = !document.hidden;
+        document.addEventListener('visibilitychange', function () {
+            isPageVisible = !document.hidden;
+            console.log('頁面可見性變更:', isPageVisible ? '可見' : '隱藏');
+        });
+
+        // 全域重新載入函式
+        function reloadAllCameras() {
+            const images = document.querySelectorAll('.camera-block img');
+            images.forEach(img => {
+                const originalSrc = img.dataset.originalUrl;
+                if (originalSrc) {
+                    img.src = originalSrc + "?manual_reload=" + Date.now();
+                }
+            });
+        }
+
+        // 加入手動重新載入按鈕
+        const reloadButton = document.createElement('button');
+        reloadButton.textContent = '重新載入所有攝影機';
+        reloadButton.style.cssText = `
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 20px auto;
+            display: block;
+            font-size: 16px;
+        `;
+        reloadButton.onclick = reloadAllCameras;
+        document.body.insertBefore(reloadButton, container);
+
+        cameraList.forEach((camera, idx) => {
+            // camera-block
+            const block = document.createElement('div');
+            block.className = 'camera-block';
+
+            // 標題
+            const title = document.createElement('h2');
+            title.textContent = camera.name;
+            block.appendChild(title);
+
+            // 建立狀態顯示元素
+            const status = document.createElement('div');
+            status.className = 'camera-status';
+            status.style.fontSize = '14px';
+            status.style.color = '#aaa';
+            status.style.marginBottom = '10px';
+            status.textContent = '載入中...';
+            block.appendChild(status);
+
+            // 建立 iframe 元素
+            const iframe = document.createElement('iframe');
+            iframe.style.width = '100%';
+            iframe.style.height = '500px';
+            iframe.style.border = 'none';
+            iframe.style.background = '#000';
+            iframe.setAttribute('allowfullscreen', '');
+            block.appendChild(iframe);
+
+            // iframe 載入 img
+            iframe.onload = function () {
+                const doc = iframe.contentDocument || iframe.contentWindow.document;
+                doc.body.style.margin = '0';
+                doc.body.style.background = '#000';
+                // 建立 img
+                const img = doc.createElement('img');
+                img.dataset.originalUrl = camera.url;
+                img.src = camera.url + '?tt=' + Date.now();
+                img.alt = '即時監視器影像：' + camera.name;
+                img.style.width = '100%';
+                img.style.height = '500px';
+                img.style.objectFit = 'contain';
+                img.style.backgroundColor = '#000';
+                img.style.border = '2px solid #fff';
+                img.style.borderRadius = '4px';
+                doc.body.appendChild(img);
+
+                // 建立錯誤計數器和狀態追蹤
+                let errorCount = 0;
+                let isOnline = false;
+                let retryTimeout = null;
+                cameraRefreshIntervals[idx] = null;
+
+                function cleanup() {
+                    if (retryTimeout) {
+                        clearTimeout(retryTimeout);
+                        retryTimeout = null;
+                    }
+                    if (cameraRefreshIntervals[idx]) {
+                        clearInterval(cameraRefreshIntervals[idx]);
+                        cameraRefreshIntervals[idx] = null;
+                    }
+                }
+
+                img.onload = function () {
+                    cleanup();
+                    errorCount = 0;
+                    isOnline = true;
+                    status.textContent = '線上 - 串流正常';
+                    status.style.color = '#4CAF50';
+                    cameraRefreshIntervals[idx] = setInterval(function () {
+                        if (isOnline && isPageVisible) {
+                            img.src = camera.url + '?refresh=' + Date.now();
+                        }
+                    }, 15000);
+                };
+
+                img.onerror = function () {
+                    cleanup();
+                    errorCount++;
+                    isOnline = false;
+                    if (errorCount <= 3) {
+                        status.textContent = `重試中... (${errorCount}/3)`;
+                        status.style.color = '#ff9800';
+                        retryTimeout = setTimeout(() => {
+                            img.src = camera.url + '?retry=' + Date.now();
+                        }, 5000);
+                    } else if (errorCount <= 6) {
+                        status.textContent = `連線困難 - 長時間重試 (${errorCount}/6)`;
+                        status.style.color = '#f44336';
+                        retryTimeout = setTimeout(() => {
+                            img.src = camera.url + '?long_retry=' + Date.now();
+                        }, 15000);
+                    } else {
+                        status.textContent = '離線 - 停止重試 (請手動重新載入)';
+                        status.style.color = '#9e9e9e';
+                    }
+                    console.log(`${camera.name}: 載入失敗 (錯誤次數: ${errorCount})`);
+                };
+            };
+            // 觸發 iframe 載入空白頁，然後載入 img
+            iframe.src = 'about:blank';
+
+            container.appendChild(block);
+        });
+
+        // 頁面卸載時清理所有定時器
+        window.addEventListener('beforeunload', function () {
+            cameraRefreshIntervals.forEach(interval => {
+                if (interval) clearInterval(interval);
+            });
+        });
+    </script>
+</body>
+
+</html>
